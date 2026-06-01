@@ -25,11 +25,21 @@ library(QCA)
 library(ggplot2)
 library(dplyr)
 library(tidyr)
-library(kableExtra)
+library(knitr)
 library(ggrepel)
 library(patchwork)
+library(showtext)
 
-theme_set(theme_bw(base_size = 12))
+if (Sys.info()[["sysname"]] == "Darwin") {
+  font_add("jpfont", "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc")
+} else {
+  noto_path <- Sys.glob("/usr/share/fonts/*/NotoSansCJK-Regular.ttc")[1]
+  font_add("jpfont", noto_path)
+}
+showtext_auto()
+knitr::opts_chunk$set(fig.showtext = TRUE)
+
+theme_set(theme_bw(base_size = 12, base_family = "jpfont"))
 ```
 
 ## 1. 背景と研究問いの設定
@@ -55,9 +65,10 @@ Lipset (1959) は「豊かさ・工業化・教育・都市化が民主主義の
 
 ```{r load-data}
 data(LF)    # Lipset fuzzy-set data (already calibrated, 0–1)
-df <- LF
-kbl(head(df, 10), digits = 3, caption = "LF データ（先頭 10 行）") |>
-  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+# declared クラスを素の numeric に変換（pivot_longer の型エラー回避）
+df <- as.data.frame(lapply(LF, as.numeric))
+rownames(df) <- rownames(LF)
+kable(head(df, 10), digits = 3, caption = "LF データ（先頭 10 行）")
 ```
 
 ```{r data-summary}
@@ -66,8 +77,7 @@ df |>
   pivot_longer(everything(),
                names_to = c("variable", ".value"),
                names_sep = "_(?=[^_]+$)") |>
-  kbl(digits = 3, caption = "記述統計") |>
-  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+  kable(digits = 3, caption = "記述統計")
 ```
 
 ```{r dist-plot, fig.cap="各変数の分布（ファジィスコア）"}
@@ -90,15 +100,15 @@ df |>
 
 ```{r calibration-check, fig.cap="SURVIVE スコアとケースラベル"}
 df_label <- df |> mutate(case = rownames(df),
-                         demo = ifelse(SURVIVE >= 0.5, "民主的生存 (≥0.5)", "非生存 (<0.5)"))
+                         demo = ifelse(SURV >= 0.5, "民主的生存 (≥0.5)", "非生存 (<0.5)"))
 
-ggplot(df_label, aes(x = reorder(case, SURVIVE), y = SURVIVE, fill = demo)) +
+ggplot(df_label, aes(x = reorder(case, SURV), y = SURV, fill = demo)) +
   geom_col(alpha = 0.85) +
   geom_hline(yintercept = 0.5, linetype = "dashed", color = "red") +
   coord_flip() +
   scale_fill_manual(values = c("民主的生存 (≥0.5)" = "#2196F3",
                                "非生存 (<0.5)"     = "#FF7043")) +
-  labs(x = NULL, y = "SURVIVE (fuzzy)", fill = NULL,
+  labs(x = NULL, y = "SURV (fuzzy)", fill = NULL,
        title = "民主主義生存スコア（0.5 = クロスオーバー）")
 ```
 
@@ -111,22 +121,20 @@ ggplot(df_label, aes(x = reorder(case, SURVIVE), y = SURVIVE, fill = demo)) +
 
 ```{r necessary}
 nc_results <- lapply(
-  setdiff(names(df), "SURVIVE"),
+  setdiff(names(df), "SURV"),
   function(cond) {
-    r <- pof(df[[cond]], df$SURVIVE, relation = "nec")
+    r <- pof(df[[cond]], df$SURV, relation = "nec")
     data.frame(
       条件       = cond,
-      一貫性     = round(r$incl.cov$incl,  3),
-      カバレッジ = round(r$incl.cov$cov.r, 3)
+      一貫性     = round(r$incl.cov$inclN, 3),
+      カバレッジ = round(r$incl.cov$covN,  3)
     )
   }
 )
 
 nc_df <- bind_rows(nc_results) |> arrange(desc(一貫性))
 
-kbl(nc_df, caption = "必要条件分析") |>
-  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) |>
-  row_spec(which(nc_df$一貫性 > 0.90), bold = TRUE, background = "#FFF9C4")
+kable(nc_df, caption = "必要条件分析")
 ```
 
 ```{r nec-plot, fig.cap="必要条件: 一貫性 vs. カバレッジ"}
@@ -149,11 +157,11 @@ nc_df |>
 ### 5.1 真理表の構築
 
 ```{r truth-table}
-conds <- setdiff(names(df), "SURVIVE")
+conds <- setdiff(names(df), "SURV")
 
 tt <- truthTable(
   data      = df,
-  outcome   = "SURVIVE",
+  outcome   = "SURV",
   conditions = conds,
   incl.cut  = 0.8,   # 一貫性閾値
   n.cut     = 1,     # 最小ケース数
@@ -197,8 +205,7 @@ sol_df <- as.data.frame(sol$essential) |>
   rownames_to_column("解") |>
   rename(一貫性 = incl, カバレッジ = cov.r, ユニークカバレッジ = cov.u)
 
-kbl(sol_df, digits = 3, caption = "最小化解（十分条件）") |>
-  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+kable(sol_df, digits = 3, caption = "最小化解（十分条件）")
 ```
 
 ---
@@ -210,7 +217,7 @@ kbl(sol_df, digits = 3, caption = "最小化解（十分条件）") |>
 
 ```{r xy-plots, fig.cap="XY プロット: 各単一条件とアウトカム"}
 cond_plots <- lapply(conds, function(cond) {
-  ggplot(df_label, aes_string(x = cond, y = "SURVIVE")) +
+  ggplot(df_label, aes_string(x = cond, y = "SURV")) +
     geom_point(aes(color = demo), size = 3, alpha = 0.8) +
     geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
     geom_text_repel(aes(label = case), size = 2.8, max.overlaps = 6) +
@@ -218,8 +225,8 @@ cond_plots <- lapply(conds, function(cond) {
                                   "非生存 (<0.5)"     = "#FF7043"),
                        guide = "none") +
     coord_fixed(xlim = c(0, 1), ylim = c(0, 1)) +
-    labs(x = cond, y = "SURVIVE",
-         title = paste0(cond, " → SURVIVE"))
+    labs(x = cond, y = "SURV",
+         title = paste0(cond, " → SURV"))
 })
 
 wrap_plots(cond_plots, ncol = 2)
@@ -237,8 +244,7 @@ tibble::tribble(
   "解の一貫性", paste(round(sol$essential$incl, 3), collapse = ", "),
   "解のカバレッジ", paste(round(sol$essential$cov.r, 3), collapse = ", ")
 ) |>
-  kbl(caption = "分析結果サマリー") |>
-  kable_styling(bootstrap_options = "striped", full_width = FALSE)
+  kable(caption = "分析結果サマリー")
 ```
 
 ### 解釈

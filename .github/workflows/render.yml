@@ -1,22 +1,35 @@
-name: Render Quarto Report
+name: Render and Deploy
 
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
-  render:
+  render-deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Japanese fonts
+        run: sudo apt-get install -y fonts-noto-cjk
+
       - name: Set up R
         uses: r-lib/actions/setup-r@v2
         with:
-          r-version: "4.4"
+          r-version: "4.6"
           use-public-rspm: true
 
       - name: Set up renv
@@ -28,10 +41,19 @@ jobs:
           version: "1.5.57"
 
       - name: Render report
-        run: quarto render analysis.qmd
+        run: |
+          quarto render analysis.qmd
+          mkdir -p _site
+          mv analysis.html _site/index.html
 
-      - name: Upload HTML artifact
-        uses: actions/upload-artifact@v4
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          name: analysis-report
-          path: analysis.html
+          path: "_site"
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
