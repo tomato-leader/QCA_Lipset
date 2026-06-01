@@ -34,7 +34,9 @@ library(tibble)
 if (Sys.info()[["sysname"]] == "Darwin") {
   font_add("jpfont", "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc")
 } else {
-  noto_path <- Sys.glob("/usr/share/fonts/*/NotoSansCJK-Regular.ttc")[1]
+  noto_path <- list.files("/usr/share/fonts",
+                          pattern = "NotoSansCJK.*\\.ttc",
+                          recursive = TRUE, full.names = TRUE)[1]
   font_add("jpfont", noto_path)
 }
 showtext_auto()
