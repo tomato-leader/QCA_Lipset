@@ -29,6 +29,7 @@ library(knitr)
 library(ggrepel)
 library(patchwork)
 library(showtext)
+library(tibble)
 
 if (Sys.info()[["sysname"]] == "Darwin") {
   font_add("jpfont", "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc")
@@ -201,9 +202,9 @@ sol
 ```
 
 ```{r solution-table}
-sol_df <- as.data.frame(sol$essential) |>
-  rownames_to_column("解") |>
-  rename(一貫性 = incl, カバレッジ = cov.r, ユニークカバレッジ = cov.u)
+sol_df <- sol$IC$incl.cov |>
+  tibble::rownames_to_column("解") |>
+  rename(一貫性 = inclS, カバレッジ = covS, ユニークカバレッジ = covU)
 
 kable(sol_df, digits = 3, caption = "最小化解（十分条件）")
 ```
@@ -240,9 +241,9 @@ wrap_plots(cond_plots, ncol = 2)
 tibble::tribble(
   ~分析,       ~主要結果,
   "必要条件",  paste(nc_df$条件[nc_df$一貫性 > 0.90], collapse = ", "),
-  "十分条件解", paste(rownames(sol$essential), collapse = "; "),
-  "解の一貫性", paste(round(sol$essential$incl, 3), collapse = ", "),
-  "解のカバレッジ", paste(round(sol$essential$cov.r, 3), collapse = ", ")
+  "十分条件解", paste(rownames(sol$IC$incl.cov), collapse = "; "),
+  "解の一貫性", paste(round(sol$IC$incl.cov$inclS, 3), collapse = ", "),
+  "解のカバレッジ", paste(round(sol$IC$incl.cov$covS,  3), collapse = ", ")
 ) |>
   kable(caption = "分析結果サマリー")
 ```
