@@ -1,0 +1,256 @@
+---
+title: "Fuzzy-Set QCA: Lipset の民主主義条件分析"
+author: "Your Name"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "コードを表示"
+    theme: cosmo
+    fig-width: 8
+    fig-height: 5
+    df-print: kable
+    embed-resources: true
+lang: ja
+execute:
+  warning: false
+  message: false
+  cache: false
+---
+
+```{r setup}
+library(QCA)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(kableExtra)
+library(ggrepel)
+library(patchwork)
+
+theme_set(theme_bw(base_size = 12))
+```
+
+## 1. 背景と研究問いの設定
+
+Lipset (1959) は「豊かさ・工業化・教育・都市化が民主主義の持続を促す」という命題を提示した。
+本分析では `QCA` パッケージ付属の **18 か国データ** を用い、
+**Fuzzy-Set QCA (fsQCA)** によって民主主義生存 (`SURVIVE`) の十分条件・必要条件を特定する。
+
+変数一覧:
+
+| 変数 | 内容 |
+|------|------|
+| `GNPCAP` | 一人当たり GNP |
+| `URBANIZA` | 都市化率 |
+| `INDLAB` | 工業労働力比率 |
+| `LITERACY` | 識字率 |
+| `GOVSTAB` | 政府の安定性 |
+| `SURVIVE` | 民主主義の生存（アウトカム） |
+
+---
+
+## 2. データの確認
+
+```{r load-data}
+data(LF)    # Lipset fuzzy-set data (already calibrated, 0–1)
+df <- LF
+kbl(head(df, 10), digits = 3, caption = "LF データ（先頭 10 行）") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+```{r data-summary}
+df |>
+  summarise(across(everything(), list(mean = mean, sd = sd, min = min, max = max))) |>
+  pivot_longer(everything(),
+               names_to = c("variable", ".value"),
+               names_sep = "_(?=[^_]+$)") |>
+  kbl(digits = 3, caption = "記述統計") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+```{r dist-plot, fig.cap="各変数の分布（ファジィスコア）"}
+df |>
+  pivot_longer(everything(), names_to = "variable", values_to = "score") |>
+  ggplot(aes(x = score, fill = variable)) +
+  geom_histogram(bins = 12, alpha = 0.8, color = "white") +
+  facet_wrap(~variable, scales = "free_y") +
+  scale_fill_brewer(palette = "Set2", guide = "none") +
+  labs(x = "Fuzzy スコア", y = "度数",
+       title = "Lipset 変数のファジィスコア分布")
+```
+
+---
+
+## 3. キャリブレーションの確認
+
+`LF` はすでに direct method でキャリブレーション済みの fsQCA データ。
+`SURVIVE` を 0.5 クロスオーバー点で二値化したときのケース分布を確認する。
+
+```{r calibration-check, fig.cap="SURVIVE スコアとケースラベル"}
+df_label <- df |> mutate(case = rownames(df),
+                         demo = ifelse(SURVIVE >= 0.5, "民主的生存 (≥0.5)", "非生存 (<0.5)"))
+
+ggplot(df_label, aes(x = reorder(case, SURVIVE), y = SURVIVE, fill = demo)) +
+  geom_col(alpha = 0.85) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "red") +
+  coord_flip() +
+  scale_fill_manual(values = c("民主的生存 (≥0.5)" = "#2196F3",
+                               "非生存 (<0.5)"     = "#FF7043")) +
+  labs(x = NULL, y = "SURVIVE (fuzzy)", fill = NULL,
+       title = "民主主義生存スコア（0.5 = クロスオーバー）")
+```
+
+---
+
+## 4. 必要条件分析
+
+アウトカム `SURVIVE` に対して各条件が **必要条件** か検定する。
+必要条件の判断基準: 一貫性 (consistency) > 0.90
+
+```{r necessary}
+nc_results <- lapply(
+  setdiff(names(df), "SURVIVE"),
+  function(cond) {
+    r <- pof(df[[cond]], df$SURVIVE, relation = "nec")
+    data.frame(
+      条件       = cond,
+      一貫性     = round(r$incl.cov$incl,  3),
+      カバレッジ = round(r$incl.cov$cov.r, 3)
+    )
+  }
+)
+
+nc_df <- bind_rows(nc_results) |> arrange(desc(一貫性))
+
+kbl(nc_df, caption = "必要条件分析") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) |>
+  row_spec(which(nc_df$一貫性 > 0.90), bold = TRUE, background = "#FFF9C4")
+```
+
+```{r nec-plot, fig.cap="必要条件: 一貫性 vs. カバレッジ"}
+nc_df |>
+  ggplot(aes(x = カバレッジ, y = 一貫性, label = 条件)) +
+  geom_point(aes(color = 一貫性 > 0.90), size = 4) +
+  geom_text_repel(size = 4) +
+  geom_hline(yintercept = 0.90, linetype = "dashed", color = "red") +
+  scale_color_manual(values = c("FALSE" = "grey60", "TRUE" = "#2196F3"),
+                     labels = c("FALSE" = "< 0.90", "TRUE" = "≥ 0.90 (必要条件候補)"),
+                     name = "一貫性") +
+  labs(title = "必要条件: 一貫性とカバレッジ",
+       subtitle = "破線 = 一貫性 0.90 閾値")
+```
+
+---
+
+## 5. 十分条件分析（Truth Table）
+
+### 5.1 真理表の構築
+
+```{r truth-table}
+conds <- setdiff(names(df), "SURVIVE")
+
+tt <- truthTable(
+  data      = df,
+  outcome   = "SURVIVE",
+  conditions = conds,
+  incl.cut  = 0.8,   # 一貫性閾値
+  n.cut     = 1,     # 最小ケース数
+  show.cases = TRUE,
+  complete  = FALSE
+)
+
+tt
+```
+
+```{r tt-plot, fig.cap="真理表: 一貫性スコアの分布"}
+tt_df <- as.data.frame(tt$tt)
+
+ggplot(tt_df, aes(x = seq_len(nrow(tt_df)), y = incl,
+                  fill = OUT == "1")) +
+  geom_col(alpha = 0.85) +
+  geom_hline(yintercept = 0.8, linetype = "dashed", color = "red") +
+  scale_fill_manual(values = c("FALSE" = "#FF7043", "TRUE" = "#4CAF50"),
+                    labels = c("FALSE" = "OUT=0/C", "TRUE" = "OUT=1"),
+                    name = "アウトカム") +
+  labs(x = "真理表行", y = "一貫性 (incl)",
+       title = "各真理表行の一貫性スコア",
+       subtitle = "破線 = 閾値 0.80")
+```
+
+### 5.2 最小化（Quine–McCluskey）
+
+```{r minimization}
+sol <- minimize(
+  input    = tt,
+  include  = "1",
+  details  = TRUE,
+  show.cases = TRUE
+)
+
+sol
+```
+
+```{r solution-table}
+sol_df <- as.data.frame(sol$essential) |>
+  rownames_to_column("解") |>
+  rename(一貫性 = incl, カバレッジ = cov.r, ユニークカバレッジ = cov.u)
+
+kbl(sol_df, digits = 3, caption = "最小化解（十分条件）") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+---
+
+## 6. XY プロット（十分条件の可視化）
+
+各解の条件スコアを横軸、`SURVIVE` を縦軸にプロットし、
+**十分性の対角線** (consistency line) 上のケース分布を確認する。
+
+```{r xy-plots, fig.cap="XY プロット: 各単一条件とアウトカム"}
+cond_plots <- lapply(conds, function(cond) {
+  ggplot(df_label, aes_string(x = cond, y = "SURVIVE")) +
+    geom_point(aes(color = demo), size = 3, alpha = 0.8) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
+    geom_text_repel(aes(label = case), size = 2.8, max.overlaps = 6) +
+    scale_color_manual(values = c("民主的生存 (≥0.5)" = "#2196F3",
+                                  "非生存 (<0.5)"     = "#FF7043"),
+                       guide = "none") +
+    coord_fixed(xlim = c(0, 1), ylim = c(0, 1)) +
+    labs(x = cond, y = "SURVIVE",
+         title = paste0(cond, " → SURVIVE"))
+})
+
+wrap_plots(cond_plots, ncol = 2)
+```
+
+---
+
+## 7. 結果のまとめ
+
+```{r summary-table}
+tibble::tribble(
+  ~分析,       ~主要結果,
+  "必要条件",  paste(nc_df$条件[nc_df$一貫性 > 0.90], collapse = ", "),
+  "十分条件解", paste(rownames(sol$essential), collapse = "; "),
+  "解の一貫性", paste(round(sol$essential$incl, 3), collapse = ", "),
+  "解のカバレッジ", paste(round(sol$essential$cov.r, 3), collapse = ", ")
+) |>
+  kbl(caption = "分析結果サマリー") |>
+  kable_styling(bootstrap_options = "striped", full_width = FALSE)
+```
+
+### 解釈
+
+- **必要条件**: 一貫性 > 0.90 の条件は上表参照。
+- **十分条件**: 最小化によって得られた論理式は、民主主義生存の**必要十分ではなく十分**な経路を示す。
+- 複数の解（INUS 条件の組み合わせ）が存在する場合、それぞれが異なる歴史的経路に対応する。
+
+---
+
+## 8. セッション情報
+
+```{r session}
+sessionInfo()
+```

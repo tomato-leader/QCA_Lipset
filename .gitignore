@@ -1,0 +1,21 @@
+# renv
+renv/library/
+renv/staging/
+.Rprofile
+
+# Quarto
+_site/
+_freeze/
+/.quarto/
+*.html
+*.pdf
+
+# R
+.Rhistory
+.RData
+.Ruserdata
+*.Rout
+
+# OS
+.DS_Store
+Thumbs.db
