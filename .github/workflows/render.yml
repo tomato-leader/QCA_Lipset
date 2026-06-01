@@ -32,6 +32,9 @@ jobs:
           r-version: "4.6"
           use-public-rspm: true
 
+      - name: Pre-install xfun
+        run: Rscript -e "install.packages('xfun', repos = 'https://cloud.r-project.org')"
+
       - name: Set up renv
         uses: r-lib/actions/setup-renv@v2
 
