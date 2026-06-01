@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(R --version)",
+      "Bash(quarto --version)",
+      "Bash(/usr/local/bin/R --version)",
+      "Bash(/opt/homebrew/bin/R --version)",
+      "Read(//Library/Frameworks/R.framework/**)",
+      "Bash(find /usr /opt /Applications -name \"R\" -type f 2>/dev/null | head -5; ls /Applications/ | grep -i \"r\\\\b\\\\|rstudio\" 2>/dev/null)",
+      "Bash(brew list *)",
+      "Bash(brew --version)",
+      "Bash(git --version)",
+      "Bash(which git *)",
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
+    ]
+  }
+}
