@@ -30,6 +30,10 @@ library(ggrepel)
 library(patchwork)
 library(showtext)
 library(tibble)
+library(rpart)
+library(rpart.plot)
+library(scales)
+library(forcats)
 
 if (Sys.info()[["sysname"]] == "Darwin") {
   font_add("jpfont", "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc")
@@ -430,7 +434,160 @@ tibble::tribble(
 
 ---
 
-## 8. セッション情報
+## 8. 決定木分析：QCA との比較
+
+**なぜ決定木を比較するのか**
+
+QCA は「どの条件の組み合わせが十分/必要か」を論理式で特定する手法であり、
+サンプルが少なく等結果性・非対称性が想定される比較政治研究に適する。
+一方、**決定木（CART）** は変数間の分岐ルールを再帰的に学習し、
+予測精度の観点から「どの変数の閾値で最も効率よく分類できるか」を示す。
+両者を並べることで、Lipset 変数の条件的役割について **異なる角度からの検証** が可能になる。
+
+| 観点 | fsQCA | 決定木（CART） |
+|------|-------|--------------|
+| 目的 | 因果的十分・必要条件の特定 | 予測精度最大化のための分類ルール |
+| 非対称性 | 明示的に扱う | 扱わない |
+| 等結果性 | 複数経路を表現 | 単一ツリーで表現 |
+| 解釈 | 集合論的論理式 | if-then 分岐ルール |
+| サンプルサイズ | 少数ケースに適する | 多数ケースで真価を発揮 |
+
+### 8.1 データ準備と決定木の構築
+
+`SURV` を 0.5 クロスオーバーで二値化（1 = 民主的生存、0 = 非生存）し、
+予測変数に `DEV`・`URB`・`LIT`・`IND`・`STB` を用いた分類木を構築する。
+過学習を抑えるため `cp = 0.01`、最大深度 `maxdepth = 4` を設定する。
+
+```{r dt-build}
+set.seed(42)
+df_dt <- df |>
+  mutate(SURV_bin = factor(ifelse(SURV >= 0.5, "生存", "非生存"),
+                           levels = c("非生存", "生存")))
+
+tree_fit <- rpart(
+  SURV_bin ~ DEV + URB + LIT + IND + STB,
+  data    = df_dt,
+  method  = "class",
+  control = rpart.control(cp = 0.01, maxdepth = 4, minsplit = 2, minbucket = 1)
+)
+
+printcp(tree_fit)
+```
+
+### 8.2 決定木の可視化
+
+各ノードに表示される数値は **[非生存数, 生存数] / サンプル数** を示す。
+太い線ほど多くのケースが通過する主要な分岐経路である。
+
+```{r dt-plot, fig.cap="決定木：民主主義生存の分類ルール", fig.width=9, fig.height=6}
+rpart.plot(
+  tree_fit,
+  type        = 4,
+  extra       = 104,
+  fallen.leaves = TRUE,
+  shadow.col  = "grey80",
+  branch.lty  = 1,
+  box.palette = list("非生存" = "#FF7043", "生存" = "#2196F3"),
+  main        = "決定木：民主主義生存（SURV）の分類",
+  cex         = 0.85,
+  tweak       = 1.1
+)
+```
+
+### 8.3 変数重要度（Variable Importance）
+
+決定木が各分岐で使用した変数の寄与度（Gini 不純度の減少量の累積）を示す。
+QCA の必要/十分条件分析と比較することで、各 Lipset 変数の役割を多角的に評価する。
+
+```{r dt-importance, fig.cap="変数重要度：Gini 不純度への寄与（決定木）"}
+imp_df <- tibble(
+  変数 = names(tree_fit$variable.importance),
+  重要度 = tree_fit$variable.importance
+) |>
+  mutate(
+    重要度_正規化 = 重要度 / sum(重要度) * 100,
+    変数 = forcats::fct_reorder(変数, 重要度_正規化)
+  )
+
+ggplot(imp_df, aes(x = 重要度_正規化, y = 変数, fill = 重要度_正規化)) +
+  geom_col(alpha = 0.85, width = 0.65) +
+  geom_text(aes(label = sprintf("%.1f%%", 重要度_正規化)),
+            hjust = -0.15, size = 4) +
+  scale_fill_gradient(low = "#BBDEFB", high = "#1565C0", guide = "none") +
+  scale_x_continuous(limits = c(0, max(imp_df$重要度_正規化) * 1.2),
+                     labels = scales::label_number(suffix = "%")) +
+  labs(x = "相対重要度（Gini 減少量の正規化）", y = NULL,
+       title = "決定木における変数重要度",
+       subtitle = "100% に正規化。値が大きいほど分類に貢献")
+```
+
+```{r dt-importance-table}
+imp_df |>
+  arrange(desc(重要度_正規化)) |>
+  mutate(
+    変数 = as.character(変数),
+    重要度 = round(重要度, 2),
+    重要度_正規化 = round(重要度_正規化, 1)
+  ) |>
+  rename(`重要度（raw）` = 重要度, `相対重要度（%）` = 重要度_正規化) |>
+  kable(caption = "変数重要度一覧（決定木）")
+```
+
+### 8.4 QCA との比較：条件の役割の共通点と相違点
+
+```{r dt-qca-compare, fig.cap="QCA 必要条件一貫性 vs. 決定木変数重要度の比較"}
+qca_nc <- nc_df |>
+  rename(変数 = 条件, QCA_一貫性 = 一貫性) |>
+  select(変数, QCA_一貫性)
+
+compare_df <- imp_df |>
+  mutate(変数 = as.character(変数)) |>
+  left_join(qca_nc, by = "変数") |>
+  mutate(QCA_一貫性 = replace_na(QCA_一貫性, NA))
+
+ggplot(compare_df, aes(x = QCA_一貫性, y = 重要度_正規化, label = 変数)) +
+  geom_point(aes(color = 変数), size = 5, alpha = 0.85) +
+  geom_text_repel(size = 4.2, fontface = "bold", box.padding = 0.5) +
+  geom_hline(yintercept = mean(compare_df$重要度_正規化, na.rm = TRUE),
+             linetype = "dashed", color = "grey60", linewidth = 0.6) +
+  geom_vline(xintercept = 0.90, linetype = "dashed", color = "red",
+             linewidth = 0.6) +
+  scale_color_brewer(palette = "Set1", guide = "none") +
+  annotate("text", x = 0.905, y = max(compare_df$重要度_正規化, na.rm = TRUE),
+           label = "QCA 必要条件閾値 (0.90)", hjust = 0, color = "red", size = 3.5) +
+  labs(x = "QCA 必要条件一貫性（inclN）",
+       y = "決定木 相対重要度（%）",
+       title = "QCA 必要条件一貫性 vs. 決定木変数重要度",
+       subtitle = "縦破線 = 必要条件閾値 0.90、横破線 = 重要度の平均")
+```
+
+### 8.5 解釈：QCA と決定木の比較考察
+
+**共通して重要とされた変数**
+
+- 決定木で重要度上位となった変数と、QCA で高い一貫性を示した変数を照合することで、
+  Lipset 命題のどの条件が **手法横断的に頑健** かを確認できる。
+- 両手法で上位に現れる変数は「民主主義生存の構造的前提」として解釈できる。
+
+**手法間の差異から見える洞察**
+
+| 観点 | QCA の結果 | 決定木の結果 |
+|------|-----------|------------|
+| **主要な条件** | 最小化解に含まれる条件の組み合わせ（論理積） | 最初の分岐で使われた変数（単独効果が大きい変数） |
+| **等結果性** | 複数の十分条件経路を明示 | 単一ツリーに統合（等結果性は表現されにくい） |
+| **閾値** | ファジィスコアの連続的関係を活用 | 分岐点（カットオフ）として離散化 |
+| **非対称性** | SURV と ~SURV を別々に分析 | 二値分類として対称的に扱う |
+
+**方法論的示唆**
+
+QCA が「どの条件の組み合わせが十分条件か」を論理式で記述するのに対し、
+決定木は「最も識別力の高い変数から順に分岐」するため、
+単独での予測力が高い変数を先に選ぶ傾向がある。
+N=18 という少数ケースでは決定木の汎化性能は低く、結果の解釈は記述的に行うべきである。
+
+---
+
+## 9. セッション情報
 
 ```{r session}
 sessionInfo()
